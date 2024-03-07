@@ -966,7 +966,11 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
 
         self.text_model = TriPlaneCLIPTextTransformer(text_config)
         self.vision_model = TriPlaneCLIPVisionTransformer(vision_config)
-
+        self.image2triplane_model = TSR.from_pretrained(
+                vision_config.image2triplane_model,
+                config_name="config.yaml",
+                weight_name="model.ckpt",
+            )
         self.visual_projection = nn.Linear(self.vision_embed_dim, self.projection_dim, bias=False)
         self.text_projection = nn.Linear(self.text_embed_dim, self.projection_dim, bias=False)
         self.logit_scale = nn.Parameter(torch.tensor(self.config.logit_scale_init_value))
@@ -974,6 +978,10 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    @property
+    def device(self):
+        return self.vision_model.embeddings.patch_embedding.weight.data.device
+    
     @add_start_docstrings_to_model_forward(CLIP_TEXT_INPUTS_DOCSTRING)
     def get_text_features(
         self,
@@ -1024,6 +1032,7 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
     @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
     def get_image_features(
         self,
+        images: Optional[List] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1058,6 +1067,11 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if images:
+            scene_codes = self.image2triplane_model(images, device=self.device)
+            b, n, c, h, w = scene_codes.shape
+            pixel_values = scene_codes.permute(0, 2, 1, 3, 4).reshape(b, n*c, h, w)
+        
         vision_outputs = self.vision_model(
             pixel_values=pixel_values,
             output_attentions=output_attentions,
@@ -1074,6 +1088,7 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
     @replace_return_docstrings(output_type=TriPlaneCLIPOutput, config_class=TriPlaneCLIPConfig)
     def forward(
         self,
+        images: Optional[List] = None,
         input_ids: Optional[torch.LongTensor] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -1114,6 +1129,11 @@ class TriPlaneCLIPModel(TriPlaneCLIPPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if images:
+            scene_codes = self.image2triplane_model(images, device=self.device)
+            b, n, c, h, w = scene_codes.shape
+            pixel_values = scene_codes.permute(0, 2, 1, 3, 4).reshape(b, n*c, h, w)
+        
         vision_outputs = self.vision_model(
             pixel_values=pixel_values,
             output_attentions=output_attentions,
@@ -1270,6 +1290,10 @@ class TriPlaneCLIPVisionModelWithProjection(TriPlaneCLIPPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    @property
+    def device(self):
+        return self.vision_model.embeddings.patch_embedding.weight.data.device
+    
     def get_input_embeddings(self) -> nn.Module:
         return self.vision_model.embeddings.patch_embedding
 
