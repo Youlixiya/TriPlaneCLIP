@@ -28,7 +28,7 @@ class TriPlaneCLIPDataset(Dataset):
         self.image_paths = [os.path.join(data_path, image_name) for image_name in self.image_names]
 
     def __len__(self):
-        return len(self.datas)
+        return len(self.image_paths)
     
     def __getitem__(self, index):
         # try:
@@ -51,10 +51,10 @@ def parse_option():
     parser = argparse.ArgumentParser('argument for training')
 
     # dataset paths
-    parser.add_argument('--dataset_path', type=str, default="data/sa/images", help='root path of dataset')
+    parser.add_argument('--dataset_path', type=str, default="data/objaverse/Cap3D_imgs_view0", help='root path of dataset')
 
     # training epochs, batch size and so on
-    parser.add_argument('--epochs', type=int, default=1, help='number of training epochs')
+    parser.add_argument('--epochs', type=int, default=5, help='number of training epochs')
     parser.add_argument('--num_workers', type=int, default=0, help='num of workers to use')
     parser.add_argument('--batch_size', type=int, default=8, help='batch_size')
     parser.add_argument('--ckpt', type=str, default='', help='model pretrained ckpt')
@@ -136,21 +136,23 @@ if __name__ == "__main__":
         cudnn.deterministic = args.deterministic
         cudnn.benchmark = args.benchmark
     vision_config = TriPlaneCLIPVisionConfig()
+    vision_config.image2triplane_model = "ckpts/TripoSR"
     model = TriPlaneCLIPVisionModel(vision_config)
-    clip_vision = CLIPVisionModel.from_pretrained("openai/clip-vit-large-patch14")
+    clip_vision = CLIPVisionModel.from_pretrained("ckpts/clip-vit-large-patch14")
     model.image2triplane_model.requires_grad_(False)
     clip_vision.requires_grad_(False)
-    processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+    processor = CLIPProcessor.from_pretrained("ckpts/clip-vit-large-patch14")
     # processor.tokenizer.add_tokens(['<ref>', '</ref>', '<box>', '</box>'], special_tokens=True)
     # model.resize_token_embeddings(len(processor.tokenizer))
-    train_dataset = TriPlaneCLIPDataset('data/blip/blip_refcoco3_rec_127k.json')
+    train_dataset = TriPlaneCLIPDataset(args.dataset_path)
     # train_sampler = DistributedSampler(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True, collate_fn=partial(collate_fn, processor=processor))
     # if args.local_rank == 0:
         # writer = SummaryWriter(os.path.join(args.root_path, args.work_dir, args.log_dir))
     # model.vision_model.requires_grad_(False)
     
-    # model.to(device=device, dtype=dtype)
+    model.to(device=device)
+    clip_vision.to(device=device)
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
     
@@ -173,7 +175,7 @@ if __name__ == "__main__":
         # train_sampler.set_epoch(epoch)
         # training
         model.train()
-        for batch_idx, images, clip_inputs in enumerate(train_loader):
+        for batch_idx, (images, clip_inputs) in enumerate(train_loader):
             total_iters += 1
             samples = len(images)
             for key, value in clip_inputs.items():

@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0,2,4,5 accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 triplane_clip_train.py
