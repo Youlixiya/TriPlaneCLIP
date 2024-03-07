@@ -212,7 +212,7 @@ if __name__ == "__main__":
                 # writer.add_scalar("LM loss", loss.item(), total_iters)
             
             # save model
-            if total_iters % args.save_iters == 0:
+            if (total_iters // args.gradient_accumulation_steps) % args.save_iters == 0:
                 # save_path = os.path.join(args.root_path, args.work_dir, args.save_dir, "iter_" + str(total_iters) + ".pth")
                 save_path = os.path.join(args.root_path, args.work_dir, args.save_dir, "iter_" + str(total_iters))
                 accelerator.print("save model to {}".format(save_path))

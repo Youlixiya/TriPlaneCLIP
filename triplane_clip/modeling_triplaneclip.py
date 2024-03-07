@@ -1259,7 +1259,12 @@ class TriPlaneCLIPVisionModelWithProjection(TriPlaneCLIPPreTrainedModel):
         super().__init__(config)
 
         self.vision_model = TriPlaneCLIPVisionTransformer(config)
-
+        self.image2triplane_model = TSR.from_pretrained(
+                config.image2triplane_model,
+                config_name="config.yaml",
+                weight_name="model.ckpt",
+            )
+        
         self.visual_projection = nn.Linear(config.hidden_size, config.projection_dim, bias=False)
 
         # Initialize weights and apply final processing
@@ -1272,6 +1277,7 @@ class TriPlaneCLIPVisionModelWithProjection(TriPlaneCLIPPreTrainedModel):
     @replace_return_docstrings(output_type=TriPlaneCLIPVisionModelOutput, config_class=TriPlaneCLIPVisionConfig)
     def forward(
         self,
+        images: Optional[List] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1300,6 +1306,11 @@ class TriPlaneCLIPVisionModelWithProjection(TriPlaneCLIPPreTrainedModel):
         ```"""
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        if images:
+            scene_codes = self.image2triplane_model(images, device=self.device)
+            b, n, c, h, w = scene_codes.shape
+            pixel_values = scene_codes.permute(0, 2, 1, 3, 4).reshape(b, n*c, h, w)
+        
         vision_outputs = self.vision_model(
             pixel_values=pixel_values,
             output_attentions=output_attentions,
