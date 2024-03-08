@@ -10,9 +10,9 @@ from functools import partial
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.data import Dataset, DataLoader
-from transformers import get_cosine_schedule_with_warmup, AutoProcessor, CLIPModel, CLIPProcessor
+from transformers import get_cosine_schedule_with_warmup, AutoProcessor, CLIPVisionModel, CLIPProcessor
 from tensorboardX import SummaryWriter
-from triplane_clip import TriPlaneCLIPModel, TriPlaneCLIPConfig
+from triplane_clip import TriPlaneCLIPVisionModel, TriPlaneCLIPVisionConfig
 
 from torch import distributed as dist
 # from torch.utils.data.distributed import DistributedSampler
@@ -24,38 +24,28 @@ class TriPlaneCLIPDataset(Dataset):
     def __init__(self,
                  data_path):
         super().__init__()
-        self.datas = json.load(open(data_path))
-        # self.image_names = os.listdir(data_path)
-        # self.image_paths = [os.path.join(data_path, image_name) for image_name in self.image_names]
+        self.image_names = os.listdir(data_path)
+        self.image_paths = [os.path.join(data_path, image_name) for image_name in self.image_names]
 
     def __len__(self):
-        return len(self.datas)
+        return len(self.image_paths)
     
     def __getitem__(self, index):
         # try:
-        data = self.datas[index]
-        image_path = data['image']
-        text = data['conversations'][1]['value']
+        image_path = self.image_paths[index]
         image = Image.open(image_path)
-        return image, text
+        return image
         
     
 def collate_fn(batch, processor):
 
     images = []
-    texts = []
 
-    for image, text in batch:
+    for image in batch:
         images.append(image)
-        texts.append(text)
     
-    inputs = processor(text=texts,
-                       return_tensors="pt",
-                       padding=True,
-                       truncation=True)
-    inputs['images'] = images
-    
-    return inputs
+    clip_inputs = processor(images=images, return_tensors="pt")
+    return images, clip_inputs
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
@@ -145,28 +135,12 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(args.seed)
         cudnn.deterministic = args.deterministic
         cudnn.benchmark = args.benchmark
-    triplaneclip_config = TriPlaneCLIPConfig()
-    model = TriPlaneCLIPModel(triplaneclip_config)
-    clip = CLIPModel.from_pretrained("ckpts/clip-vit-large-patch14")
-    
-    model.text_model = clip.text_model
-    model.visual_projection = clip.visual_projection
-    model.text_projection = clip.text_projection
-    model.vision_model.pre_layrnorm = clip.vision_model.pre_layrnorm
-    model.vision_model.encoder = clip.vision_model.encoder
-    model.vision_model.post_layernorm = clip.vision_model.post_layernorm
-    
-    model.vision_model.pre_layrnorm.requires_grad_(False)
-    model.vision_model.encoder.requires_grad_(False)
-    model.vision_model.post_layernorm.requires_grad_(False)
-    model.text_model.requires_grad_(False)
+    vision_config = TriPlaneCLIPVisionConfig()
+    vision_config.image2triplane_model = "ckpts/TripoSR"
+    model = TriPlaneCLIPVisionModel(vision_config)
+    clip_vision = CLIPVisionModel.from_pretrained("ckpts/clip-vit-large-patch14")
     model.image2triplane_model.requires_grad_(False)
-    model.visual_projection.requires_grad_(False)
-    model.text_projection.requires_grad_(False)
-    model.image2triplane_model.requires_grad_(False)
-    
-    del clip
-    
+    clip_vision.requires_grad_(False)
     processor = CLIPProcessor.from_pretrained("ckpts/clip-vit-large-patch14")
     # processor.tokenizer.add_tokens(['<ref>', '</ref>', '<box>', '</box>'], special_tokens=True)
     # model.resize_token_embeddings(len(processor.tokenizer))
@@ -184,7 +158,7 @@ if __name__ == "__main__":
     
      # optimizer and scheduler
     # optimizer = get_optimizer(args, model.module.vision_model)
-    optimizer = get_optimizer(args, model.vision_model.embeddings)
+    optimizer = get_optimizer(args, model)
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=100,
@@ -201,20 +175,20 @@ if __name__ == "__main__":
         # train_sampler.set_epoch(epoch)
         # training
         model.train()
-        for batch_idx, inputs in enumerate(train_loader):
+        for batch_idx, (images, clip_inputs) in enumerate(train_loader):
             total_iters += 1
-            samples = len(inputs['images'])
-            for key, value in inputs.items():
+            samples = len(images)
+            for key, value in clip_inputs.items():
                 if type(value) == torch.Tensor:
-                    inputs[key] = value.to(device=device)
-                    # if key == 'pixel_values':
-                    #     clip_inputs[key] = value.to(device=device)
-                    # else:
-                    #     clip_inputs[key] = value.to(device=device)
-            data['return_loss'] = True
+                    if key == 'pixel_values':
+                        clip_inputs[key] = value.to(device=device)
+                    else:
+                        clip_inputs[key] = value.to(device=device)
+            # data['return_loss'] = True
             optimizer.zero_grad()
-            out = model(**inputs)
-            loss = out.loss
+            clip_out = clip_vision(**clip_inputs)
+            out = model(images = images)
+            loss = loss_fn(out.pooler_output, clip_out.pooler_output)
             # print(loss.item())
             # loss = reduce_mean(output.loss, dist.get_world_size())
             # loss.backward()
